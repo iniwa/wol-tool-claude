@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- 背景 -->
+  <rect width="32" height="32" fill="#0d0f14"/>
+
+  <!-- ひし形（正方形を45°回転） -->
+  <polygon points="16,2 30,16 16,30 2,16"
+           fill="#151820"
+           stroke="#00e5ff"
+           stroke-width="1.5"/>
+
+  <!-- 「WL」テキスト -->
+  <text x="16" y="20"
+        text-anchor="middle"
+        font-family="monospace"
+        font-size="9"
+        font-weight="700"
+        fill="#00e5ff"
+        letter-spacing="0.5">WL</text>
+</svg>
