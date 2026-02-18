@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -16,22 +17,23 @@ import (
 // --- データ構造 ---
 
 type Device struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	MAC     string `json:"mac"`
-	IP      string `json:"ip"`    // ping監視用（空欄可）
-	Online  bool   `json:"online"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	MAC      string `json:"mac"`
+	IP       string `json:"ip"`    // ping監視用（空欄可）
+	Online   bool   `json:"online"`
 	LastSeen string `json:"last_seen"`
 }
 
 type Store struct {
-	mu      sync.RWMutex
-	Devices []*Device `json:"devices"`
-	path    string
+	mu           sync.RWMutex
+	Devices      []*Device `json:"devices"`
+	PingInterval int       `json:"ping_interval"` // 秒、0=無効
+	path         string
 }
 
-func NewStore(path string) *Store {
-	s := &Store{path: path}
+func NewStore(path string, defaultInterval int) *Store {
+	s := &Store{path: path, PingInterval: defaultInterval}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		json.Unmarshal(data, s)
@@ -101,6 +103,18 @@ func (s *Store) All() []*Device {
 	return out
 }
 
+func (s *Store) GetPingInterval() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.PingInterval
+}
+
+func (s *Store) SetPingInterval(sec int) {
+	s.mu.Lock()
+	s.PingInterval = sec
+	s.mu.Unlock()
+}
+
 // --- WoL ---
 
 func sendMagicPacket(mac string) error {
@@ -143,23 +157,59 @@ func pingHost(ip string) bool {
 	return cmd.Run() == nil
 }
 
+// pingAllDevices はIPアドレスが設定された全デバイスを並列でpingする
+func (s *Store) pingAllDevices() {
+	devs := s.All()
+	var wg sync.WaitGroup
+	for _, d := range devs {
+		if d.IP == "" {
+			continue
+		}
+		wg.Add(1)
+		d := d
+		go func() {
+			defer wg.Done()
+			online := pingHost(d.IP)
+			s.mu.Lock()
+			d.Online = online
+			if online {
+				d.LastSeen = time.Now().Format("2006-01-02 15:04:05")
+			}
+			s.mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	s.Save()
+}
+
+// pingOneDevice は指定IDのデバイスをpingしてステータスを更新する
+func (s *Store) pingOneDevice(id string) *Device {
+	d := s.Get(id)
+	if d == nil || d.IP == "" {
+		return d
+	}
+	online := pingHost(d.IP)
+	s.mu.Lock()
+	d.Online = online
+	if online {
+		d.LastSeen = time.Now().Format("2006-01-02 15:04:05")
+	}
+	s.mu.Unlock()
+	s.Save()
+	return d
+}
+
 func (s *Store) startPingLoop() {
 	go func() {
 		for {
-			for _, d := range s.All() {
-				if d.IP == "" {
-					continue
-				}
-				online := pingHost(d.IP)
-				s.mu.Lock()
-				d.Online = online
-				if online {
-					d.LastSeen = time.Now().Format("2006-01-02 15:04:05")
-				}
-				s.mu.Unlock()
+			interval := s.GetPingInterval()
+			if interval > 0 {
+				s.pingAllDevices()
+				time.Sleep(time.Duration(interval) * time.Second)
+			} else {
+				// 無効時は5秒ごとに設定変更を確認
+				time.Sleep(5 * time.Second)
 			}
-			s.Save()
-			time.Sleep(30 * time.Second)
 		}
 	}()
 }
@@ -191,7 +241,40 @@ func setupRoutes(store *Store) *http.ServeMux {
 	// WebUI (静的ファイル)
 	mux.Handle("/", http.FileServer(http.Dir("./static")))
 
-	// GET /api/devices — デバイス一覧
+	// GET /api/config, PUT /api/config — ping間隔設定
+	mux.HandleFunc("/api/config", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			jsonResp(w, map[string]int{"ping_interval": store.GetPingInterval()}, 200)
+		case http.MethodPut:
+			var body struct {
+				PingInterval int `json:"ping_interval"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				jsonResp(w, map[string]string{"error": err.Error()}, 400)
+				return
+			}
+			if body.PingInterval < 0 {
+				jsonResp(w, map[string]string{"error": "ping_interval must be >= 0"}, 400)
+				return
+			}
+			store.SetPingInterval(body.PingInterval)
+			store.Save()
+			jsonResp(w, map[string]int{"ping_interval": body.PingInterval}, 200)
+		}
+	}))
+
+	// POST /api/ping/all — 全デバイスをpingして結果を返す
+	mux.HandleFunc("/api/ping/all", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		store.pingAllDevices()
+		jsonResp(w, store.All(), 200)
+	}))
+
+	// GET /api/devices — デバイス一覧 / POST — 追加
 	mux.HandleFunc("/api/devices", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -213,13 +296,14 @@ func setupRoutes(store *Store) *http.ServeMux {
 		}
 	}))
 
-	// DELETE /api/devices/{id}
+	// /api/devices/{id}/...
 	mux.HandleFunc("/api/devices/", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Path[len("/api/devices/"):]
 		if id == "" {
 			http.NotFound(w, r)
 			return
 		}
+
 		// POST /api/devices/{id}/wake
 		if len(id) > 5 && id[len(id)-5:] == "/wake" {
 			devID := id[:len(id)-5]
@@ -234,6 +318,23 @@ func setupRoutes(store *Store) *http.ServeMux {
 			}
 			log.Printf("WoL sent to %s (%s)", d.Name, d.MAC)
 			jsonResp(w, map[string]string{"status": "sent"}, 200)
+			return
+		}
+
+		// POST /api/devices/{id}/ping
+		if len(id) > 5 && id[len(id)-5:] == "/ping" {
+			devID := id[:len(id)-5]
+			d := store.Get(devID)
+			if d == nil {
+				jsonResp(w, map[string]string{"error": "not found"}, 404)
+				return
+			}
+			if d.IP == "" {
+				jsonResp(w, map[string]string{"error": "IPアドレスが設定されていません"}, 400)
+				return
+			}
+			updated := store.pingOneDevice(devID)
+			jsonResp(w, updated, 200)
 			return
 		}
 
@@ -281,12 +382,18 @@ func main() {
 	if p := os.Getenv("PORT"); p != "" {
 		port = p
 	}
+	pingInterval := 30
+	if v := os.Getenv("PING_INTERVAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			pingInterval = n
+		}
+	}
 
-	store := NewStore(dataPath)
+	store := NewStore(dataPath, pingInterval)
 	store.startPingLoop()
 
 	mux := setupRoutes(store)
 	addr := ":" + port
-	log.Printf("WoL Tool starting on %s", addr)
+	log.Printf("WoL Tool starting on %s (ping interval: %ds)", addr, store.GetPingInterval())
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

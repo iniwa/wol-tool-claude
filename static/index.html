@@ -170,6 +170,15 @@
     align-items: center;
     justify-content: space-between;
     margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .list-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
   }
 
   .device-grid {
@@ -371,6 +380,45 @@
     font-size: 0.75rem;
   }
   .btn-cancel:hover { color: var(--red); border-color: var(--red); }
+
+  /* --- Ping controls --- */
+  .btn-ping-all {
+    background: transparent;
+    color: var(--green);
+    border: 1px solid var(--green);
+    padding: 0.45rem 0.9rem;
+    font-size: 0.75rem;
+  }
+  .btn-ping-all:hover { background: var(--green); color: var(--bg); }
+  .btn-ping-all.sending { animation: blink 0.4s step-end infinite; pointer-events: none; }
+
+  .interval-control {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .interval-control input {
+    width: 55px;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .btn-interval-set {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+  }
+  .btn-interval-set:hover { color: var(--accent); border-color: var(--accent); }
+
+  .last-seen.clickable { cursor: pointer; transition: color 0.15s; }
+  .last-seen.clickable:hover { color: var(--accent); }
+  .last-seen.pinging { animation: blink 0.4s step-end infinite; color: var(--accent); pointer-events: none; }
 </style>
 </head>
 <body>
@@ -406,7 +454,16 @@
 
   <div class="list-header">
     <div class="section-label" style="margin:0">// デバイス一覧</div>
-    <div class="last-seen" id="refresh-info">自動更新: 30秒</div>
+    <div class="list-controls">
+      <button class="btn btn-ping-all" onclick="pingAll()">◎ 全台確認</button>
+      <div class="interval-control">
+        <span>自動:</span>
+        <input type="number" id="interval-input" min="0" max="3600"
+               onkeydown="if(event.key==='Enter')savePingInterval()">
+        <span>秒</span>
+        <button class="btn btn-interval-set" onclick="savePingInterval()">設定</button>
+      </div>
+    </div>
   </div>
 
   <div class="device-grid" id="device-list">
@@ -420,6 +477,8 @@
 <script>
 const API = '';
 let devices = [];
+let pingInterval = 30;
+let autoReloadTimer = null;
 
 function toast(msg, type = 'success') {
   const el = document.getElementById('toast');
@@ -433,6 +492,12 @@ function statusDot(device) {
   if (!device.ip) return `<div class="status-dot unknown" title="監視なし"></div>`;
   if (device.online) return `<div class="status-dot online" title="オンライン"></div>`;
   return `<div class="status-dot offline" title="オフライン"></div>`;
+}
+
+function statusBadge(d) {
+  if (!d.ip) return `<div class="last-seen">—</div>`;
+  const label = d.online ? 'ONLINE' : 'OFFLINE';
+  return `<div class="last-seen clickable" onclick="pingDevice('${d.id}')" title="クリックしてPING確認">${label}</div>`;
 }
 
 function render(list) {
@@ -452,7 +517,7 @@ function render(list) {
           ${d.last_seen ? ` · 最終確認: ${d.last_seen}` : ''}
         </div>
       </div>
-      <div class="last-seen">${d.online ? 'ONLINE' : d.ip ? 'OFFLINE' : '—'}</div>
+      ${statusBadge(d)}
       <div class="device-actions">
         <button class="btn btn-wake" id="wake-${d.id}" onclick="wake('${d.id}', '${esc(d.name)}')">▷ WAKE</button>
         <button class="btn btn-edit" onclick="editDevice('${d.id}')">✎ 編集</button>
@@ -473,6 +538,87 @@ async function load() {
     render(devices);
   } catch(e) {
     toast('サーバーに接続できません', 'error');
+  }
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch(`${API}/api/config`);
+    const cfg = await r.json();
+    pingInterval = cfg.ping_interval;
+    document.getElementById('interval-input').value = pingInterval;
+  } catch(e) {
+    document.getElementById('interval-input').value = pingInterval;
+  } finally {
+    startAutoReload();
+  }
+}
+
+function startAutoReload() {
+  if (autoReloadTimer) clearInterval(autoReloadTimer);
+  autoReloadTimer = null;
+  if (pingInterval > 0) {
+    autoReloadTimer = setInterval(load, pingInterval * 1000);
+  }
+}
+
+async function savePingInterval() {
+  const val = parseInt(document.getElementById('interval-input').value, 10);
+  if (isNaN(val) || val < 0) { toast('有効な値（0以上）を入力してください', 'error'); return; }
+  const r = await fetch(`${API}/api/config`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ping_interval: val})
+  });
+  if (r.ok) {
+    pingInterval = val;
+    startAutoReload();
+    toast(val === 0 ? '自動確認を無効化しました' : `自動確認: ${val}秒に設定しました`, 'success');
+  } else {
+    toast('設定に失敗しました', 'error');
+  }
+}
+
+async function pingAll() {
+  const btn = document.querySelector('.btn-ping-all');
+  btn.classList.add('sending');
+  btn.textContent = '◎ 確認中...';
+  try {
+    const r = await fetch(`${API}/api/ping/all`, {method: 'POST'});
+    if (r.ok) {
+      devices = await r.json();
+      render(devices);
+      toast('全デバイスの生存確認が完了しました', 'success');
+    } else {
+      toast('確認に失敗しました', 'error');
+    }
+  } catch {
+    toast('接続エラー', 'error');
+  } finally {
+    btn.classList.remove('sending');
+    btn.textContent = '◎ 全台確認';
+  }
+}
+
+async function pingDevice(id) {
+  const card = document.getElementById(`card-${id}`);
+  const badge = card ? card.querySelector('.last-seen') : null;
+  if (badge) badge.classList.add('pinging');
+  try {
+    const r = await fetch(`${API}/api/devices/${id}/ping`, {method: 'POST'});
+    if (r.ok) {
+      const updated = await r.json();
+      const idx = devices.findIndex(d => d.id === id);
+      if (idx !== -1) devices[idx] = updated;
+      render(devices);
+    } else {
+      const e = await r.json();
+      toast(e.error || 'PING失敗', 'error');
+      if (badge) badge.classList.remove('pinging');
+    }
+  } catch {
+    toast('接続エラー', 'error');
+    if (badge) badge.classList.remove('pinging');
   }
 }
 
@@ -583,9 +729,9 @@ setInterval(() => {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('ja-JP');
 }, 1000);
 
-// 自動リロード
+// 初期化
 load();
-setInterval(load, 30000);
+loadConfig();
 </script>
 </body>
 </html>
