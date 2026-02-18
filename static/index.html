@@ -329,6 +329,48 @@
     .device-actions { grid-column: 1 / -1; }
     .last-seen { display: none; }
   }
+
+  /* --- Edit mode --- */
+  .device-card.editing {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .edit-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  @media (max-width: 700px) {
+    .edit-form { grid-template-columns: 1fr; }
+  }
+
+  .btn-edit {
+    background: transparent;
+    color: var(--accent2);
+    border: 1px solid var(--accent2);
+    padding: 0.45rem 0.7rem;
+    font-size: 0.75rem;
+  }
+  .btn-edit:hover { background: var(--accent2); color: #fff; }
+
+  .btn-save {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    padding: 0.45rem 1rem;
+    font-size: 0.75rem;
+  }
+  .btn-save:hover { filter: brightness(1.1); }
+
+  .btn-cancel {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 0.45rem 0.7rem;
+    font-size: 0.75rem;
+  }
+  .btn-cancel:hover { color: var(--red); border-color: var(--red); }
 </style>
 </head>
 <body>
@@ -377,6 +419,7 @@
 
 <script>
 const API = '';
+let devices = [];
 
 function toast(msg, type = 'success') {
   const el = document.getElementById('toast');
@@ -392,13 +435,13 @@ function statusDot(device) {
   return `<div class="status-dot offline" title="オフライン"></div>`;
 }
 
-function render(devices) {
-  const list = document.getElementById('device-list');
-  if (!devices.length) {
-    list.innerHTML = '<div class="empty">デバイスが登録されていません</div>';
+function render(list) {
+  const el = document.getElementById('device-list');
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">デバイスが登録されていません</div>';
     return;
   }
-  list.innerHTML = devices.map(d => `
+  el.innerHTML = list.map(d => `
     <div class="device-card" id="card-${d.id}">
       ${statusDot(d)}
       <div class="device-info">
@@ -412,6 +455,7 @@ function render(devices) {
       <div class="last-seen">${d.online ? 'ONLINE' : d.ip ? 'OFFLINE' : '—'}</div>
       <div class="device-actions">
         <button class="btn btn-wake" id="wake-${d.id}" onclick="wake('${d.id}', '${esc(d.name)}')">▷ WAKE</button>
+        <button class="btn btn-edit" onclick="editDevice('${d.id}')">✎ 編集</button>
         <button class="btn btn-delete" onclick="deleteDevice('${d.id}', '${esc(d.name)}')">✕</button>
       </div>
     </div>
@@ -425,8 +469,8 @@ function esc(s) {
 async function load() {
   try {
     const r = await fetch(`${API}/api/devices`);
-    const data = await r.json();
-    render(data);
+    devices = await r.json();
+    render(devices);
   } catch(e) {
     toast('サーバーに接続できません', 'error');
   }
@@ -472,6 +516,54 @@ async function wake(id, name) {
   } finally {
     btn.classList.remove('sending');
     btn.textContent = '▷ WAKE';
+  }
+}
+
+function editDevice(id) {
+  const d = devices.find(x => x.id === id);
+  if (!d) return;
+  const card = document.getElementById(`card-${id}`);
+  card.classList.add('editing');
+  card.innerHTML = `
+    ${statusDot(d)}
+    <div class="edit-form">
+      <div class="field">
+        <label>デバイス名</label>
+        <input type="text" id="edit-name-${id}" value="${esc(d.name)}">
+      </div>
+      <div class="field">
+        <label>MACアドレス</label>
+        <input type="text" id="edit-mac-${id}" value="${esc(d.mac)}">
+      </div>
+      <div class="field">
+        <label>IPアドレス（任意）</label>
+        <input type="text" id="edit-ip-${id}" value="${esc(d.ip || '')}">
+      </div>
+    </div>
+    <div class="device-actions">
+      <button class="btn btn-save" onclick="saveDevice('${id}')">✓ 保存</button>
+      <button class="btn btn-cancel" onclick="load()">キャンセル</button>
+    </div>
+  `;
+  document.getElementById(`edit-name-${id}`).focus();
+}
+
+async function saveDevice(id) {
+  const name = document.getElementById(`edit-name-${id}`).value.trim();
+  const mac  = document.getElementById(`edit-mac-${id}`).value.trim();
+  const ip   = document.getElementById(`edit-ip-${id}`).value.trim();
+  if (!name || !mac) { toast('名前とMACアドレスは必須です', 'error'); return; }
+  const r = await fetch(`${API}/api/devices/${id}`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, mac, ip})
+  });
+  if (r.ok) {
+    toast(`${name} を更新しました`, 'success');
+    load();
+  } else {
+    const e = await r.json();
+    toast(e.error || '更新に失敗しました', 'error');
   }
 }
 

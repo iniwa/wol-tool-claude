@@ -79,6 +79,20 @@ func (s *Store) Get(id string) *Device {
 	return nil
 }
 
+func (s *Store) Update(id, name, mac, ip string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range s.Devices {
+		if d.ID == id {
+			d.Name = name
+			d.MAC = mac
+			d.IP = ip
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) All() []*Device {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -155,7 +169,7 @@ func (s *Store) startPingLoop() {
 func withCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -224,6 +238,27 @@ func setupRoutes(store *Store) *http.ServeMux {
 		}
 
 		switch r.Method {
+		case http.MethodPut:
+			var body struct {
+				Name string `json:"name"`
+				MAC  string `json:"mac"`
+				IP   string `json:"ip"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				jsonResp(w, map[string]string{"error": err.Error()}, 400)
+				return
+			}
+			if body.Name == "" || body.MAC == "" {
+				jsonResp(w, map[string]string{"error": "name and mac are required"}, 400)
+				return
+			}
+			if store.Update(id, body.Name, body.MAC, body.IP) {
+				store.Save()
+				jsonResp(w, store.Get(id), 200)
+			} else {
+				jsonResp(w, map[string]string{"error": "not found"}, 404)
+			}
+
 		case http.MethodDelete:
 			if store.Delete(id) {
 				store.Save()

@@ -10,7 +10,7 @@ services:
     volumes:
       - wol-data:/data
     environment:
-      - PORT=8092
+      - PORT=8090
       - DATA_PATH=/data/devices.json
     network_mode: host
 
