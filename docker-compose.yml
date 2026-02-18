@@ -5,12 +5,12 @@ services:
     image: ghcr.io/iniwa/wol-tool-claude:latest
     container_name: wol-tool
     restart: unless-stopped
-    ports:
-      - "8088:8080"      # ← 左側のポートを変更して公開ポートを調整
+    # network_mode: host のためポートマッピング不要（ホストの 8080 ポートで直接アクセス）
+    # ポートを変更したい場合は PORT 環境変数を変更する
     volumes:
       - wol-data:/data
     environment:
-      - PORT=8080
+      - PORT=8092
       - DATA_PATH=/data/devices.json
     network_mode: host
 
