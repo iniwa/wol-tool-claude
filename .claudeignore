@@ -1,0 +1,13 @@
+.git/
+.github/
+build/
+dist/
+*.exe
+*.bin
+wol-server
+/data/
+*.json
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
