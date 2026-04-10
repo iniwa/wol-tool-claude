@@ -730,8 +730,19 @@ setInterval(() => {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('ja-JP');
 }, 1000);
 
+// ページを開いたときにping生存確認を実行
+async function initialPing() {
+  try {
+    const r = await fetch(`${API}/api/ping/all`, {method: 'POST'});
+    if (r.ok) {
+      devices = await r.json();
+      render(devices);
+    }
+  } catch {}
+}
+
 // 初期化
-load();
+load().then(() => initialPing());
 loadConfig();
 </script>
 </body>
