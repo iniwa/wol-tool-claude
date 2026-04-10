@@ -10,8 +10,8 @@ RUN CGO_ENABLED=0 go build -o wol-server .
 # --- Runtime Stage ---
 FROM alpine:3.19
 
-# ping コマンドのためのパッケージ
-RUN apk add --no-cache iputils
+# ping コマンド + リモートシャットダウン用パッケージ
+RUN apk add --no-cache iputils samba-client
 
 WORKDIR /app
 COPY --from=builder /app/wol-server .

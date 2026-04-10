@@ -17,12 +17,14 @@ import (
 // --- データ構造 ---
 
 type Device struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	MAC      string `json:"mac"`
-	IP       string `json:"ip"`    // ping監視用（空欄可）
-	Online   bool   `json:"online"`
-	LastSeen string `json:"last_seen"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	MAC          string `json:"mac"`
+	IP           string `json:"ip"`            // ping監視用（空欄可）
+	Online       bool   `json:"online"`
+	LastSeen     string `json:"last_seen"`
+	ShutdownUser string `json:"shutdown_user"` // リモートシャットダウン用ユーザー名
+	ShutdownPass string `json:"shutdown_pass"` // リモートシャットダウン用パスワード
 }
 
 type Store struct {
@@ -81,7 +83,7 @@ func (s *Store) Get(id string) *Device {
 	return nil
 }
 
-func (s *Store) Update(id, name, mac, ip string) bool {
+func (s *Store) Update(id, name, mac, ip, shutdownUser, shutdownPass string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, d := range s.Devices {
@@ -89,6 +91,8 @@ func (s *Store) Update(id, name, mac, ip string) bool {
 			d.Name = name
 			d.MAC = mac
 			d.IP = ip
+			d.ShutdownUser = shutdownUser
+			d.ShutdownPass = shutdownPass
 			return true
 		}
 	}
@@ -214,6 +218,23 @@ func (s *Store) startPingLoop() {
 	}()
 }
 
+// --- リモートシャットダウン ---
+
+func shutdownWindows(ip, user, pass string) error {
+	if ip == "" {
+		return fmt.Errorf("IPアドレスが設定されていません")
+	}
+	if user == "" || pass == "" {
+		return fmt.Errorf("シャットダウン用の認証情報が設定されていません")
+	}
+	cmd := exec.Command("net", "rpc", "shutdown", "-I", ip, "-U", user+"%"+pass, "-f")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("shutdown failed: %s (%w)", string(output), err)
+	}
+	return nil
+}
+
 // --- HTTP ハンドラ ---
 
 func withCORS(h http.HandlerFunc) http.HandlerFunc {
@@ -321,6 +342,23 @@ func setupRoutes(store *Store) *http.ServeMux {
 			return
 		}
 
+		// POST /api/devices/{id}/shutdown
+		if len(id) > 9 && id[len(id)-9:] == "/shutdown" {
+			devID := id[:len(id)-9]
+			d := store.Get(devID)
+			if d == nil {
+				jsonResp(w, map[string]string{"error": "not found"}, 404)
+				return
+			}
+			if err := shutdownWindows(d.IP, d.ShutdownUser, d.ShutdownPass); err != nil {
+				jsonResp(w, map[string]string{"error": err.Error()}, 500)
+				return
+			}
+			log.Printf("Shutdown sent to %s (%s)", d.Name, d.IP)
+			jsonResp(w, map[string]string{"status": "sent"}, 200)
+			return
+		}
+
 		// POST /api/devices/{id}/ping
 		if len(id) > 5 && id[len(id)-5:] == "/ping" {
 			devID := id[:len(id)-5]
@@ -341,9 +379,11 @@ func setupRoutes(store *Store) *http.ServeMux {
 		switch r.Method {
 		case http.MethodPut:
 			var body struct {
-				Name string `json:"name"`
-				MAC  string `json:"mac"`
-				IP   string `json:"ip"`
+				Name         string `json:"name"`
+				MAC          string `json:"mac"`
+				IP           string `json:"ip"`
+				ShutdownUser string `json:"shutdown_user"`
+				ShutdownPass string `json:"shutdown_pass"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				jsonResp(w, map[string]string{"error": err.Error()}, 400)
@@ -353,7 +393,7 @@ func setupRoutes(store *Store) *http.ServeMux {
 				jsonResp(w, map[string]string{"error": "name and mac are required"}, 400)
 				return
 			}
-			if store.Update(id, body.Name, body.MAC, body.IP) {
+			if store.Update(id, body.Name, body.MAC, body.IP, body.ShutdownUser, body.ShutdownPass) {
 				store.Save()
 				jsonResp(w, store.Get(id), 200)
 			} else {
