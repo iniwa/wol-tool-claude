@@ -517,6 +517,46 @@ function statusBadge(d) {
   return `<div class="last-seen clickable" onclick="pingDevice('${d.id}')" title="クリックしてPING確認">${label}</div>`;
 }
 
+function metaHTML(d) {
+  return `
+          <span class="mac">${esc(d.mac)}</span>
+          ${d.ip ? `<span>${esc(d.ip)}</span>` : ''}
+          ${d.last_seen ? ` · 最終確認: ${d.last_seen}` : ''}
+        `;
+}
+
+function replaceFromHTML(oldEl, html) {
+  if (!oldEl) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html.trim();
+  const next = tmp.firstElementChild;
+  if (next) oldEl.replaceWith(next);
+}
+
+function updateCardStatus(d) {
+  const card = document.getElementById(`card-${d.id}`);
+  if (!card) return;
+  replaceFromHTML(card.querySelector('.status-dot'), statusDot(d));
+  replaceFromHTML(card.querySelector('.last-seen'), statusBadge(d));
+  const meta = card.querySelector('.meta');
+  if (meta) meta.innerHTML = metaHTML(d);
+}
+
+function applyStatuses(list) {
+  const sameStructure = list.length === devices.length &&
+    list.every((d, i) => devices[i] && devices[i].id === d.id);
+  if (!sameStructure) {
+    devices = list;
+    render(devices);
+    return;
+  }
+  list.forEach(d => {
+    const idx = devices.findIndex(x => x.id === d.id);
+    if (idx !== -1) devices[idx] = d;
+    updateCardStatus(d);
+  });
+}
+
 function render(list) {
   const el = document.getElementById('device-list');
   if (!list.length) {
@@ -528,11 +568,7 @@ function render(list) {
       ${statusDot(d)}
       <div class="device-info">
         <div class="name">${esc(d.name)}</div>
-        <div class="meta">
-          <span class="mac">${esc(d.mac)}</span>
-          ${d.ip ? `<span>${esc(d.ip)}</span>` : ''}
-          ${d.last_seen ? ` · 最終確認: ${d.last_seen}` : ''}
-        </div>
+        <div class="meta">${metaHTML(d)}</div>
       </div>
       ${statusBadge(d)}
       <div class="device-actions">
@@ -572,11 +608,19 @@ async function loadConfig() {
   }
 }
 
+async function refreshStatuses() {
+  try {
+    const r = await fetch(`${API}/api/devices`);
+    const list = await r.json();
+    applyStatuses(list);
+  } catch {}
+}
+
 function startAutoReload() {
   if (autoReloadTimer) clearInterval(autoReloadTimer);
   autoReloadTimer = null;
   if (pingInterval > 0) {
-    autoReloadTimer = setInterval(load, pingInterval * 1000);
+    autoReloadTimer = setInterval(refreshStatuses, pingInterval * 1000);
   }
 }
 
@@ -604,8 +648,7 @@ async function pingAll() {
   try {
     const r = await fetch(`${API}/api/ping/all`, {method: 'POST'});
     if (r.ok) {
-      devices = await r.json();
-      render(devices);
+      applyStatuses(await r.json());
       toast('全デバイスの生存確認が完了しました', 'success');
     } else {
       toast('確認に失敗しました', 'error');
@@ -628,7 +671,7 @@ async function pingDevice(id) {
       const updated = await r.json();
       const idx = devices.findIndex(d => d.id === id);
       if (idx !== -1) devices[idx] = updated;
-      render(devices);
+      updateCardStatus(updated);
     } else {
       const e = await r.json();
       toast(e.error || 'PING失敗', 'error');
@@ -783,8 +826,7 @@ async function initialPing() {
   try {
     const r = await fetch(`${API}/api/ping/all`, {method: 'POST'});
     if (r.ok) {
-      devices = await r.json();
-      render(devices);
+      applyStatuses(await r.json());
     }
   } catch {}
 }
