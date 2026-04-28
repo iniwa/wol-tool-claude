@@ -1,0 +1,31 @@
+# --- VCS ---
+.git/
+.gitignore
+.gitattributes
+
+# --- Docs / meta（ビルドに不要） ---
+README.md
+CLAUDE.md
+docs/
+LICENSE
+
+# --- IDE / Claude / MCP ---
+.claude/
+.serena/
+.claudeignore
+.idea/
+.vscode/
+
+# --- ビルド成果物 / ローカルデータ ---
+wol-server
+wol-server.exe
+*.exe
+data/
+devices.json
+*.log
+*.bak
+*.tmp
+
+# --- OS ---
+.DS_Store
+Thumbs.db

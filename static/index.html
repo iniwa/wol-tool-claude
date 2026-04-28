@@ -573,7 +573,7 @@ function render(list) {
       ${statusBadge(d)}
       <div class="device-actions">
         <button class="btn btn-wake" id="wake-${d.id}" onclick="wake('${d.id}', '${esc(d.name)}')">▷ WAKE</button>
-        ${d.shutdown_user && d.ip ? `<button class="btn btn-shutdown" id="shutdown-${d.id}" onclick="shutdownDevice('${d.id}', '${esc(d.name)}')">■ SHUTDOWN</button>` : ''}
+        ${d.has_shutdown_pass && d.shutdown_user && d.ip ? `<button class="btn btn-shutdown" id="shutdown-${d.id}" onclick="shutdownDevice('${d.id}', '${esc(d.name)}')">■ SHUTDOWN</button>` : ''}
         <button class="btn btn-edit" onclick="editDevice('${d.id}')">✎ 編集</button>
         <button class="btn btn-delete" onclick="deleteDevice('${d.id}', '${esc(d.name)}')">✕</button>
       </div>
@@ -772,8 +772,9 @@ function editDevice(id) {
         <input type="text" id="edit-suser-${id}" value="${esc(d.shutdown_user || '')}" placeholder="DOMAIN\\user or user">
       </div>
       <div class="field">
-        <label>シャットダウン用パスワード</label>
-        <input type="password" id="edit-spass-${id}" value="${esc(d.shutdown_pass || '')}" placeholder="password">
+        <label>シャットダウン用パスワード${d.has_shutdown_pass ? '（保存済み・変更時のみ入力）' : ''}</label>
+        <input type="password" id="edit-spass-${id}" value="" placeholder="${d.has_shutdown_pass ? '変更する場合のみ入力' : 'password'}" autocomplete="new-password">
+        ${d.has_shutdown_pass ? `<label style="margin-top:0.4rem;display:flex;align-items:center;gap:0.4rem;font-size:0.7rem;color:var(--muted);"><input type="checkbox" id="edit-clearpass-${id}" style="width:auto;"> パスワードを削除</label>` : ''}
       </div>
     </div>
     <div class="device-actions">
@@ -789,12 +790,14 @@ async function saveDevice(id) {
   const mac  = document.getElementById(`edit-mac-${id}`).value.trim();
   const ip   = document.getElementById(`edit-ip-${id}`).value.trim();
   const shutdown_user = document.getElementById(`edit-suser-${id}`).value.trim();
-  const shutdown_pass = document.getElementById(`edit-spass-${id}`).value.trim();
+  const shutdown_pass = document.getElementById(`edit-spass-${id}`).value;
+  const clearEl = document.getElementById(`edit-clearpass-${id}`);
+  const clear_shutdown_pass = !!(clearEl && clearEl.checked);
   if (!name || !mac) { toast('名前とMACアドレスは必須です', 'error'); return; }
   const r = await fetch(`${API}/api/devices/${id}`, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, mac, ip, shutdown_user, shutdown_pass})
+    body: JSON.stringify({name, mac, ip, shutdown_user, shutdown_pass, clear_shutdown_pass})
   });
   if (r.ok) {
     toast(`${name} を更新しました`, 'success');

@@ -1,18 +1,22 @@
-version: "3.8"
-
 services:
   wol-tool:
     image: ghcr.io/iniwa/wol-tool-claude:latest
     container_name: wol-tool
     restart: unless-stopped
-    # network_mode: host のためポートマッピング不要（ホストの 8080 ポートで直接アクセス）
-    # ポートを変更したい場合は PORT 環境変数を変更する
-    volumes:
-      - wol-data:/data
-    environment:
-      - PORT=8090
-      - DATA_PATH=/data/devices.json
+    # WoL のマジックパケット (UDP 255.255.255.255:9) を LAN にブロードキャストするため host ネットワーク必須
     network_mode: host
-
-volumes:
-  wol-data:
+    volumes:
+      # SSD 上の bind mount。ホスト側で `mkdir -p` して 0700 で運用すること
+      - /home/iniwa/docker/wol-tool/data:/data
+    environment:
+      - TZ=Asia/Tokyo
+      - PORT=8080
+      - DATA_PATH=/data/devices.json
+      - PING_INTERVAL=30
+      # Basic 認証（必須ではないが、外部公開時は必ず設定すること）
+      # - AUTH_USER=admin
+      # - AUTH_PASS=change-me
+    deploy:
+      resources:
+        limits:
+          memory: 128m

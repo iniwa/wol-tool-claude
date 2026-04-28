@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,17 +22,51 @@ type Device struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	MAC          string `json:"mac"`
-	IP           string `json:"ip"`            // ping監視用（空欄可）
+	IP           string `json:"ip"`
 	Online       bool   `json:"online"`
 	LastSeen     string `json:"last_seen"`
-	ShutdownUser string `json:"shutdown_user"` // リモートシャットダウン用ユーザー名
-	ShutdownPass string `json:"shutdown_pass"` // リモートシャットダウン用パスワード
+	ShutdownUser string `json:"shutdown_user"`
+	ShutdownPass string `json:"shutdown_pass"`
+}
+
+// DeviceView は API レスポンス用の構造体。パスワードを含まず、
+// パスワードが設定済みかどうかだけを has_shutdown_pass で示す。
+type DeviceView struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	MAC              string `json:"mac"`
+	IP               string `json:"ip"`
+	Online           bool   `json:"online"`
+	LastSeen         string `json:"last_seen"`
+	ShutdownUser     string `json:"shutdown_user"`
+	HasShutdownPass  bool   `json:"has_shutdown_pass"`
+}
+
+func toView(d *Device) DeviceView {
+	return DeviceView{
+		ID:              d.ID,
+		Name:            d.Name,
+		MAC:             d.MAC,
+		IP:              d.IP,
+		Online:          d.Online,
+		LastSeen:        d.LastSeen,
+		ShutdownUser:    d.ShutdownUser,
+		HasShutdownPass: d.ShutdownPass != "",
+	}
+}
+
+func toViews(ds []*Device) []DeviceView {
+	out := make([]DeviceView, len(ds))
+	for i, d := range ds {
+		out[i] = toView(d)
+	}
+	return out
 }
 
 type Store struct {
 	mu           sync.RWMutex
 	Devices      []*Device `json:"devices"`
-	PingInterval int       `json:"ping_interval"` // 秒、0=無効
+	PingInterval int       `json:"ping_interval"`
 	path         string
 }
 
@@ -50,7 +86,7 @@ func (s *Store) Save() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	data, _ := json.MarshalIndent(s, "", "  ")
-	os.WriteFile(s.path, data, 0644)
+	os.WriteFile(s.path, data, 0600)
 }
 
 func (s *Store) Add(d *Device) {
@@ -83,7 +119,10 @@ func (s *Store) Get(id string) *Device {
 	return nil
 }
 
-func (s *Store) Update(id, name, mac, ip, shutdownUser, shutdownPass string) bool {
+// Update は指定IDのデバイスを更新する。
+// shutdownPass が空文字の場合は既存の値を保持する（UIに平文を露出させないため）。
+// shutdownPass を明示的にクリアしたい場合は clearPass=true を指定する。
+func (s *Store) Update(id, name, mac, ip, shutdownUser, shutdownPass string, clearPass bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, d := range s.Devices {
@@ -92,7 +131,11 @@ func (s *Store) Update(id, name, mac, ip, shutdownUser, shutdownPass string) boo
 			d.MAC = mac
 			d.IP = ip
 			d.ShutdownUser = shutdownUser
-			d.ShutdownPass = shutdownPass
+			if clearPass {
+				d.ShutdownPass = ""
+			} else if shutdownPass != "" {
+				d.ShutdownPass = shutdownPass
+			}
 			return true
 		}
 	}
@@ -119,6 +162,20 @@ func (s *Store) SetPingInterval(sec int) {
 	s.mu.Unlock()
 }
 
+// --- バリデーション ---
+
+func validIP(ip string) bool {
+	if ip == "" {
+		return true
+	}
+	return net.ParseIP(ip) != nil
+}
+
+func validMAC(mac string) bool {
+	_, err := net.ParseMAC(mac)
+	return err == nil
+}
+
 // --- WoL ---
 
 func sendMagicPacket(mac string) error {
@@ -128,11 +185,9 @@ func sendMagicPacket(mac string) error {
 	}
 
 	packet := make([]byte, 102)
-	// 6バイトのFF
 	for i := 0; i < 6; i++ {
 		packet[i] = 0xFF
 	}
-	// MACアドレスを16回繰り返す
 	for i := 1; i <= 16; i++ {
 		copy(packet[i*6:], hw)
 	}
@@ -149,7 +204,7 @@ func sendMagicPacket(mac string) error {
 // --- Ping ---
 
 func pingHost(ip string) bool {
-	if ip == "" {
+	if !validIP(ip) || ip == "" {
 		return false
 	}
 	var cmd *exec.Cmd
@@ -161,7 +216,6 @@ func pingHost(ip string) bool {
 	return cmd.Run() == nil
 }
 
-// pingAllDevices はIPアドレスが設定された全デバイスを並列でpingする
 func (s *Store) pingAllDevices() {
 	devs := s.All()
 	var wg sync.WaitGroup
@@ -186,7 +240,6 @@ func (s *Store) pingAllDevices() {
 	s.Save()
 }
 
-// pingOneDevice は指定IDのデバイスをpingしてステータスを更新する
 func (s *Store) pingOneDevice(id string) *Device {
 	d := s.Get(id)
 	if d == nil || d.IP == "" {
@@ -211,7 +264,6 @@ func (s *Store) startPingLoop() {
 				s.pingAllDevices()
 				time.Sleep(time.Duration(interval) * time.Second)
 			} else {
-				// 無効時は5秒ごとに設定変更を確認
 				time.Sleep(5 * time.Second)
 			}
 		}
@@ -221,13 +273,19 @@ func (s *Store) startPingLoop() {
 // --- リモートシャットダウン ---
 
 func shutdownWindows(ip, user, pass string) error {
-	if ip == "" {
-		return fmt.Errorf("IPアドレスが設定されていません")
+	if !validIP(ip) || ip == "" {
+		return fmt.Errorf("有効な IP アドレスが設定されていません")
 	}
 	if user == "" || pass == "" {
 		return fmt.Errorf("シャットダウン用の認証情報が設定されていません")
 	}
-	cmd := exec.Command("net", "rpc", "shutdown", "-I", ip, "-U", user+"%"+pass, "-f")
+	// 引数注入対策: ユーザー名にハイフン始まりや空白を許可しない
+	if strings.HasPrefix(user, "-") || strings.ContainsAny(user, " \t\n") {
+		return fmt.Errorf("invalid username")
+	}
+	// パスワードは argv ではなく stdin で渡し、プロセスリストから秘匿する
+	cmd := exec.Command("net", "rpc", "shutdown", "-I", ip, "-U", user, "-f")
+	cmd.Stdin = strings.NewReader(pass + "\n")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("shutdown failed: %s (%w)", string(output), err)
@@ -237,33 +295,39 @@ func shutdownWindows(ip, user, pass string) error {
 
 // --- HTTP ハンドラ ---
 
-func withCORS(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		h(w, r)
-	}
-}
-
 func jsonResp(w http.ResponseWriter, v any, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }
 
+// basicAuth は AUTH_USER / AUTH_PASS が両方設定されている場合のみ Basic 認証を要求する。
+// 未設定の場合は警告ログを出してスルーする（信頼された LAN 内専用想定）。
+func basicAuth(user, pass string, h http.Handler) http.Handler {
+	if user == "" || pass == "" {
+		return h
+	}
+	expectedUser := []byte(user)
+	expectedPass := []byte(pass)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(u), expectedUser) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), expectedPass) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="WoL Tool"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 func setupRoutes(store *Store) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// WebUI (静的ファイル)
 	mux.Handle("/", http.FileServer(http.Dir("./static")))
 
-	// GET /api/config, PUT /api/config — ping間隔設定
-	mux.HandleFunc("/api/config", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			jsonResp(w, map[string]int{"ping_interval": store.GetPingInterval()}, 200)
@@ -282,24 +346,24 @@ func setupRoutes(store *Store) *http.ServeMux {
 			store.SetPingInterval(body.PingInterval)
 			store.Save()
 			jsonResp(w, map[string]int{"ping_interval": body.PingInterval}, 200)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	}))
+	})
 
-	// POST /api/ping/all — 全デバイスをpingして結果を返す
-	mux.HandleFunc("/api/ping/all", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/ping/all", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		store.pingAllDevices()
-		jsonResp(w, store.All(), 200)
-	}))
+		jsonResp(w, toViews(store.All()), 200)
+	})
 
-	// GET /api/devices — デバイス一覧 / POST — 追加
-	mux.HandleFunc("/api/devices", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/devices", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			jsonResp(w, store.All(), 200)
+			jsonResp(w, toViews(store.All()), 200)
 
 		case http.MethodPost:
 			var d Device
@@ -311,14 +375,23 @@ func setupRoutes(store *Store) *http.ServeMux {
 				jsonResp(w, map[string]string{"error": "name and mac are required"}, 400)
 				return
 			}
+			if !validMAC(d.MAC) {
+				jsonResp(w, map[string]string{"error": "invalid MAC address"}, 400)
+				return
+			}
+			if !validIP(d.IP) {
+				jsonResp(w, map[string]string{"error": "invalid IP address"}, 400)
+				return
+			}
 			store.Add(&d)
 			store.Save()
-			jsonResp(w, d, 201)
+			jsonResp(w, toView(&d), 201)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	}))
+	})
 
-	// /api/devices/{id}/...
-	mux.HandleFunc("/api/devices/", withCORS(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/devices/", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Path[len("/api/devices/"):]
 		if id == "" {
 			http.NotFound(w, r)
@@ -326,8 +399,12 @@ func setupRoutes(store *Store) *http.ServeMux {
 		}
 
 		// POST /api/devices/{id}/wake
-		if len(id) > 5 && id[len(id)-5:] == "/wake" {
-			devID := id[:len(id)-5]
+		if strings.HasSuffix(id, "/wake") {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			devID := strings.TrimSuffix(id, "/wake")
 			d := store.Get(devID)
 			if d == nil {
 				jsonResp(w, map[string]string{"error": "not found"}, 404)
@@ -343,8 +420,12 @@ func setupRoutes(store *Store) *http.ServeMux {
 		}
 
 		// POST /api/devices/{id}/shutdown
-		if len(id) > 9 && id[len(id)-9:] == "/shutdown" {
-			devID := id[:len(id)-9]
+		if strings.HasSuffix(id, "/shutdown") {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			devID := strings.TrimSuffix(id, "/shutdown")
 			d := store.Get(devID)
 			if d == nil {
 				jsonResp(w, map[string]string{"error": "not found"}, 404)
@@ -360,8 +441,12 @@ func setupRoutes(store *Store) *http.ServeMux {
 		}
 
 		// POST /api/devices/{id}/ping
-		if len(id) > 5 && id[len(id)-5:] == "/ping" {
-			devID := id[:len(id)-5]
+		if strings.HasSuffix(id, "/ping") {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			devID := strings.TrimSuffix(id, "/ping")
 			d := store.Get(devID)
 			if d == nil {
 				jsonResp(w, map[string]string{"error": "not found"}, 404)
@@ -372,18 +457,19 @@ func setupRoutes(store *Store) *http.ServeMux {
 				return
 			}
 			updated := store.pingOneDevice(devID)
-			jsonResp(w, updated, 200)
+			jsonResp(w, toView(updated), 200)
 			return
 		}
 
 		switch r.Method {
 		case http.MethodPut:
 			var body struct {
-				Name         string `json:"name"`
-				MAC          string `json:"mac"`
-				IP           string `json:"ip"`
-				ShutdownUser string `json:"shutdown_user"`
-				ShutdownPass string `json:"shutdown_pass"`
+				Name           string `json:"name"`
+				MAC            string `json:"mac"`
+				IP             string `json:"ip"`
+				ShutdownUser   string `json:"shutdown_user"`
+				ShutdownPass   string `json:"shutdown_pass"`
+				ClearShutdownPass bool `json:"clear_shutdown_pass"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				jsonResp(w, map[string]string{"error": err.Error()}, 400)
@@ -393,9 +479,17 @@ func setupRoutes(store *Store) *http.ServeMux {
 				jsonResp(w, map[string]string{"error": "name and mac are required"}, 400)
 				return
 			}
-			if store.Update(id, body.Name, body.MAC, body.IP, body.ShutdownUser, body.ShutdownPass) {
+			if !validMAC(body.MAC) {
+				jsonResp(w, map[string]string{"error": "invalid MAC address"}, 400)
+				return
+			}
+			if !validIP(body.IP) {
+				jsonResp(w, map[string]string{"error": "invalid IP address"}, 400)
+				return
+			}
+			if store.Update(id, body.Name, body.MAC, body.IP, body.ShutdownUser, body.ShutdownPass, body.ClearShutdownPass) {
 				store.Save()
-				jsonResp(w, store.Get(id), 200)
+				jsonResp(w, toView(store.Get(id)), 200)
 			} else {
 				jsonResp(w, map[string]string{"error": "not found"}, 404)
 			}
@@ -407,8 +501,10 @@ func setupRoutes(store *Store) *http.ServeMux {
 			} else {
 				jsonResp(w, map[string]string{"error": "not found"}, 404)
 			}
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	}))
+	})
 
 	return mux
 }
@@ -429,11 +525,19 @@ func main() {
 		}
 	}
 
+	authUser := os.Getenv("AUTH_USER")
+	authPass := os.Getenv("AUTH_PASS")
+	if authUser == "" || authPass == "" {
+		log.Println("WARNING: AUTH_USER/AUTH_PASS が未設定です。認証なしで起動します。LAN 内専用で運用してください。")
+	}
+
 	store := NewStore(dataPath, pingInterval)
 	store.startPingLoop()
 
 	mux := setupRoutes(store)
+	handler := basicAuth(authUser, authPass, mux)
+
 	addr := ":" + port
 	log.Printf("WoL Tool starting on %s (ping interval: %ds)", addr, store.GetPingInterval())
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, handler))
 }

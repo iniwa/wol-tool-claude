@@ -1,0 +1,55 @@
+# --- ビルド成果物 ---
+wol-server
+wol-server.exe
+*.exe
+*.out
+dist/
+build/
+
+# --- 実行時データ（誤コミット防止） ---
+devices.json
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# --- ログ ---
+*.log
+*.log.*
+logs/
+
+# --- 一時ファイル ---
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*~
+tmp/
+temp/
+.cache/
+
+# --- 機密情報（誤コミット防止） ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- エディタ・OS ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# --- Claude Code / MCP ローカル状態 ---
+.claude/settings.local.json
+.serena/
+
+# --- Go ---
+vendor/
+*.test
+coverage.out
