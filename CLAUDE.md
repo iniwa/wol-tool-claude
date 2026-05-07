@@ -4,6 +4,16 @@
 
 WoL Tool — Wake-on-LAN + Ping 監視 + リモートシャットダウンの軽量 Web ツール（Go 製）。
 
+
+## Codex / Claude Code Workflow
+- This `CLAUDE.md` is for Claude Code execution rules.
+- Codex handoffs should normally be saved under `docs/handoffs/`; when a handoff file path is provided, read it before editing.
+- If the project also has `AGENTS.md`, treat it as the Codex-side source of design intent, handoff rules, and review criteria.
+- When the user provides a Codex handoff, follow that handoff first, then this file, then local project conventions.
+- If the task is ambiguous, requires changing documented design intent, or needs files outside the handoff, stop and ask before editing.
+- Do not commit automatically unless explicitly requested.
+- Report changed files, summary, verification results, blocked checks, and any design questions that should return to Codex.
+
 ## Project Overview
 - **Language**: Go 1.22 (single binary, no external Go deps)
 - **Runtime deps**: `iputils` (ping), `samba-client` (`net rpc shutdown`)
