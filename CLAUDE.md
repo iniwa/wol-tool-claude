@@ -14,6 +14,15 @@ WoL Tool — Wake-on-LAN + Ping 監視 + リモートシャットダウンの軽
 - Do not commit automatically unless explicitly requested.
 - Report changed files, summary, verification results, blocked checks, and any design questions that should return to Codex.
 
+## Model / Subagent Policy
+- Use Opus as the primary Claude Code coordinator by default.
+- Opus owns context reading, requirement interpretation, planning, design-sensitive judgment, and final review.
+- Use Sonnet subagents for scoped implementation work, mechanical edits, localized refactors, code/log inspection, and verification when the task is clear enough to delegate.
+- Give each Sonnet subagent a narrow goal, explicit file scope, constraints, non-goals, and expected report.
+- Sonnet subagents must not change documented design intent, expand scope, add dependencies, alter build/deploy/external exposure, touch secrets, or make architectural decisions without returning to Opus.
+- For small edits, Opus may implement directly rather than creating unnecessary subagent overhead.
+- If subagents or the intended model split are unavailable, continue with the available model and report that limitation.
+
 ## Project Overview
 - **Language**: Go 1.22 (single binary, no external Go deps)
 - **Runtime deps**: `iputils` (ping), `samba-client` (`net rpc shutdown`)
@@ -68,6 +77,7 @@ Cloudflared (Cloudflare Tunnel) はラズパイにインストール済み。た
 ## Knowledge Persistence
 - 設計判断・トラブルシュート手順は `docs/*.md` に蓄積する
 - 作業開始時に `docs/` に既存メモがないか確認
+Detailed design history belongs in `docs/decisions/`. Keep `AGENTS.md` focused on short, durable rules; do not add `Alternatives Considered` as a default Decision Log heading there.
 
 ## Tooling
 - Use **Serena MCP** for code navigation/edit (symbol search, replace, insert)
