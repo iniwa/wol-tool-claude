@@ -1,178 +1,71 @@
 # AGENTS.md
 
 ## Purpose
-This file is the Codex-side working agreement for `WoL-tool-Claude`.
 
-Codex uses this file to preserve design intent, decide whether work should stay in Codex or be handed off to Claude Code, and review implementation results.
-Claude Code uses `CLAUDE.md` for execution rules.
+This is the Codex-side working agreement for `WoL-tool-Claude`, a lightweight web tool for Wake-on-LAN, ping monitoring, and remote Windows shutdown.
 
-## Project Summary
-- Project name: `WoL-tool-Claude`
-- Purpose: Wake-on-LAN, ping monitoring, and remote shutdown web tool for LAN PCs.
-- Summary from project docs: Wake-on-LAN web tool for Raspberry Pi Docker deployment.
-- Runtime target: Raspberry Pi Docker linux/arm64, Go single binary
-- Repository path: `D:\Git\WoL-tool-Claude`
-- Stack: Go, plain JavaScript, Docker, host networking
+`AGENTS.md` owns design intent, model and handoff policy, Codex review, and documentation lifecycle. `CLAUDE.md` owns implementation, verification, and reporting rules.
 
-## Base References
-- Codex base: `D:/Git/CLAUDEmdStrage/_base/AGENTS.md`
-- Claude Code base for Windows/local projects: `D:/Git/CLAUDEmdStrage/_base/CLAUDE_windows.md`
-- Claude Code base for Raspberry Pi Docker projects: `D:/Git/CLAUDEmdStrage/_base/CLAUDE_docker.md`
+## Project Facts
 
-## Role Split
-Codex is responsible for:
-- clarifying requirements, non-goals, and success criteria
-- identifying change type and design risk
-- preserving responsibility boundaries and design intent
-- preparing scoped Claude Code handoffs when execution is clear
-- reviewing Claude Code output against this file and the handoff
-- recording durable decisions in `AGENTS.md` or `docs/*.md`
+- Runtime: a Go 1.22 single binary in Docker, primarily on Raspberry Pi `linux/arm64`.
+- Frontend: plain JavaScript and static assets under `static/`.
+- Go dependencies: standard library only; `go.mod` has no third-party modules.
+- Runtime commands: `ping` from iputils and `net rpc shutdown` from samba-client.
+- Container definitions: `Dockerfile` and `docker-compose.yml`; the image is published for `linux/amd64` and `linux/arm64`.
+- `network_mode: host` is required for the UDP Wake-on-LAN broadcast to `255.255.255.255:9`.
+- Persistent state is `/data/devices.json`, supplied through the established host bind mount.
 
-Claude Code is responsible for:
-- following the current Codex handoff and `CLAUDE.md`
-- editing only allowed files unless it explains why more files are required
-- running requested verification where possible
-- reporting changed files, summary, verification results, blocked checks, and design questions
+## Model and Role Policy
 
-## Claude Code Model Orchestration
-Claude Code should normally run with Opus as the primary coordinator.
+- Use GPT-5.3-Codex-Spark (`gpt-5.3-codex-spark`) proactively, when available, for low-risk, well-scoped, independently verifiable supporting work that requires no material design judgment or source-code implementation.
+- GPT-5.6 Terra (`gpt-5.6-terra`) or Sol (`gpt-5.6-sol`) owns requirements and design. Whenever Terra is used, set its reasoning level to `high`. Prefer Sol for substantial ambiguity, risk, or cross-boundary reasoning.
+- After design is fixed, delegate source-code implementation first to Claude Code Sonnet 5 at effort medium from the repository root: `claude -p --model sonnet --permission-mode auto "<handoff/task prompt>"`.
+- Only when Sonnet 5 is unavailable because of usage limits or service availability, use GPT-5.6 Luna (`gpt-5.6-luna`) with reasoning level `max` for the same implementation slice.
+- Implementation failure, failed verification, or a design question is not model unavailability; return it to Codex.
+- Apply this policy to every coordinating Codex model and its subagents. Do not create coordinator-specific exceptions.
+- Codex may keep requirements, design, read-only investigation, review, synthesis, and small documentation-consistency changes in one context.
+- Claude Code subagents are optional and limited to clearly parallel mechanical work inside the approved handoff.
 
-Opus is responsible for:
-- reading `AGENTS.md`, `CLAUDE.md`, handoff files, and relevant project context
-- interpreting requirements, constraints, non-goals, and verification expectations
-- deciding the implementation plan and whether subagents are appropriate
-- giving Sonnet subagents narrow implementation or investigation tasks
-- reviewing subagent output before final reporting
-- making design-sensitive decisions only when they are already allowed by the handoff
+## Durable Project Rules
 
-Sonnet subagents are responsible for:
-- mechanical code edits
-- repetitive refactors inside an explicit file scope
-- localized tests, verification, and log/code inspection
-- implementation tasks where goal, files, constraints, and non-goals are already clear
+- Keep the service and frontend lightweight. Prefer the Go standard library and plain JavaScript; do not add dependencies or a framework without explicit approval.
+- Preserve `network_mode: host` and UDP broadcast behavior unless the approved design explicitly changes the network model.
+- Keep mutable state outside the image. Preserve the `/data` bind mount, non-root container execution, host-directory protection, and `devices.json` mode `0600`.
+- `shutdown_pass` is stored in plaintext in `devices.json`. Never expose it through an API response, log, process argument, documentation example, or error. Responses expose only `has_shutdown_pass`; remote shutdown passes the password to `net rpc` through stdin.
+- Preserve update semantics: an empty `shutdown_pass` retains the existing value, while `clear_shutdown_pass: true` explicitly removes it.
+- The service assumes a trusted LAN. Internet exposure requires both configured `AUTH_USER`/`AUTH_PASS` Basic Auth and an upstream access boundary such as Cloudflare Access.
+- Do not treat the absence of CORS headers as CSRF protection. Cross-site simple form POST requests can still reach wake and shutdown endpoints; CSRF protection is not implemented.
+- Do not change the GHCR image, supported architectures, GitHub Actions publication, Portainer/Compose deployment, host networking, persistent mounts, authentication, or external exposure unless explicitly requested.
+- Do not read or edit real `devices.json`, credentials, `.env`, runtime state, or generated artifacts unless explicitly required.
+- Preserve unrelated changes. Do not commit, push, publish, or deploy unless explicitly requested.
 
-Sonnet subagents must not:
-- change documented design intent on their own
-- expand the edit scope beyond the handoff without Opus review
-- introduce dependencies, build tooling, packaging, CI/CD, deployment, or external exposure changes unless explicitly listed
-- touch secrets, credentials, `.env`, or local settings
-- make final architectural decisions without returning the question to Opus/Codex
+## Handoff Workflow
 
-For very small edits, Opus may implement directly instead of creating unnecessary subagent overhead.
-If the requested Claude Code environment cannot use subagents or the intended model split, Claude Code should continue with the available model and report that limitation.
+- Keep policy, design, review, read-only investigation, and small documentation corrections in Codex.
+- One handoff covers one cohesive, independently verifiable change and its direct verification. Run unresolved discovery as a separate read-only slice.
+- State the goal, files to inspect and edit, constraints, non-goals, concrete data sources, verification, and expected report.
+- If a handoff times out before its intended edit, do not rerun it unchanged. Narrow the behavior, files, and verification first.
+- The implementer works only on the current slice and returns design questions to Codex. Codex reviews the report and diff before starting another slice.
+- Keep active or blocked handoffs in `docs/handoffs/`. Move a handoff to `docs/handoffs/archive/` only after implementation, verification, review, required runtime work, and follow-up are complete.
 
-## Decision Rule
-Keep work in Codex when:
-- requirements are ambiguous
-- design intent or responsibility boundaries may change
-- the task is small enough to edit and review in one context
-- the main value is planning, review, or documentation consistency
+## Verification and Review
 
-Hand off to Claude Code when:
-- goal, files, constraints, non-goals, and verification are clear
-- the task is mostly implementation or mechanical editing
-- the allowed edit scope can be stated explicitly
-- Claude Code tooling or iteration speed is useful
+The repository has no test suite. Use the focused applicable checks:
 
-## Project-Specific Guidance
-- Use Raspberry Pi / Docker guidance from `D:/Git/CLAUDEmdStrage/_base`.
-- Preserve `linux/arm64` compatibility unless the project explicitly supports more architectures.
-- Do not change deployment, image naming, Portainer, or external exposure behavior without explicit approval.
+- `gofmt -l .`
+- `go vet ./...`
+- `go build ./...`
+- `git diff --check`
 
-## Files To Inspect First
-- CLAUDE.md
-- CLAUDE_ja.md
-- README.md
-- main.go
-- Dockerfile
-- docker-compose.yml
+`gofmt -l .` may report the known existing `main.go` formatting baseline; do not format unrelated code merely to clear that output. Report it distinctly from new formatting regressions.
 
-## Files Claude Code May Edit In Scoped Tasks
-- main.go
-- static/
-- Dockerfile
-- docker-compose.yml
+During review, confirm that the diff stayed in scope, preserved host-network and persistent-data boundaries, did not expose passwords or weaken external access, introduced no unapproved dependency or deployment change, and reported blocked verification explicitly.
 
-## Constraints
-- Keep Go dependencies minimal; prefer standard library.
-- Preserve `network_mode: host` unless the network design is explicitly changed.
-- Treat shutdown credentials and `devices.json` as sensitive.
-- Do not weaken authentication or external exposure safeguards.
-- Do not commit automatically unless explicitly requested.
-- Do not revert user or other-agent changes unless explicitly requested.
-- Do not edit secrets, credentials, `.env`, local runtime data, or generated heavy artifacts unless explicitly requested.
+## Documentation Lifecycle
 
-## Handoff Template
-When Codex hands work to Claude Code, create `docs/handoffs/YYYY-MM-DD-<short-task>.md`. Create the `docs/handoffs/` directory if it does not exist. Use this format in that file.
-
-```md
-Read AGENTS.md, CLAUDE.md, and this handoff file before implementation.
-If implementation would violate constraints or require files outside this handoff, stop and ask before editing.
-
-## Goal
-...
-
-## Background
-...
-
-## Files To Inspect
-- ...
-
-## Files To Edit
-- ...
-
-## Constraints
-- ...
-
-## Non Goals
-- ...
-
-## Verification
-- ...
-
-## Expected Report
-- Changed files
-- Summary
-- Verification results
-- Blocked checks
-- Design questions for Codex
-```
-
-## Codex Review Checklist
-After Claude Code returns, review:
-- Did the diff stay inside the handoff?
-- Did any file outside `Files To Edit` change? If yes, was it necessary?
-- Did the implementation preserve stated constraints and non-goals?
-- Did it introduce dependencies, build tooling, packaging, CI/CD, deployment changes, or external exposure changes unexpectedly?
-- Did it touch secrets, credentials, `.env`, local settings, or runtime data?
-- Did verification run, and are blocked checks explained?
-- Does any discovery need to become a new `AGENTS.md` or `docs/*.md` decision?
-
-## Knowledge Persistence
-- Use `AGENTS.md` for durable workflow and design decisions.
-- Use `docs/*.md` for reusable technical notes, architecture details, procedures, and project-specific knowledge.
-- Before meaningful work, check relevant existing docs.
-- Do not silently encode durable design decisions only in code.
-
-## Design Record Scope
-Keep `AGENTS.md` focused on short, durable rules that future Codex and Claude Code sessions must follow.
-
-Do not add `Alternatives Considered` as a default Decision Log heading. When rejected options or longer background matter, summarize only the durable rule in `AGENTS.md` and put the detail under `docs/decisions/`.
-## Decision Log
-
-### YYYY-MM-DD: Decision title
-
-Context:
-- What problem or requirement caused this decision?
-
-Decision:
-- What did we decide?
-
-Reason:
-- Why is this the right tradeoff now?
-
-Constraints Introduced:
-- What should future implementation preserve?
-
-Do Not Change Casually:
-- What would cause design drift if changed without review?
+- Keep this file limited to short, current, durable rules and links.
+- Put detailed decisions and evidence in `docs/decisions/`.
+- Keep current decision guidance active; archive it only when fully implemented and no longer needed.
+- Put reusable procedures and troubleshooting information in the appropriate `docs/` location.
+- Do not rewrite completed handoffs or archived decisions merely to match a newer shared policy.
