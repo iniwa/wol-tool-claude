@@ -105,6 +105,13 @@ docker build -t wol-tool .
 docker run --rm --network host -v $(pwd)/data:/data wol-tool
 ```
 
+## 開発ワークフロー
+
+- 設計判断・handoff 作成は Codex（`AGENTS.md` / `docs/handoffs/`）、実装・検証は Codex が `claude -p --model sonnet --effort medium --permission-mode auto "<handoff/task prompt>"` で委譲した Claude Code（`CLAUDE.md`、Sonnet）が担当する。
+- 改善候補は [`docs/improvements.md`](docs/improvements.md) のチェックリストで管理する（機能追加のアイデアは対象外）。
+- 設計判断の記録は `docs/decisions/`、再発しうる不具合の対処は `docs/troubleshooting/` に蓄積する。
+- 検証コマンド: `go vet ./...` / `go build -o /dev/null .` / `gofmt -l .`
+
 ## ライセンス
 
 MIT — [LICENSE](LICENSE) を参照
