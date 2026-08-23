@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file contains Claude Code execution rules for `WoL-tool-Claude`. Design intent, handoff policy, and Codex review belong in `AGENTS.md`.
+This file contains compatibility boundaries for Claude-oriented tooling in `WoL-tool-Claude`. Design intent, runtime-selected role policy, handoff policy, and review gates belong in `AGENTS.md`.
 
 ## Read First
 
@@ -39,7 +39,7 @@ Before editing, read:
 - Preserve the CSRF warning: no CORS response headers does not prevent cross-site simple form POST requests, and wake/shutdown CSRF protection is not implemented.
 - Do not send Wake-on-LAN packets, ping or shut down real devices, or change remote Windows firewall/RPC settings during routine verification without explicit authorization.
 - Return any proposed dependency, image, architecture, host-network, mount, persistence, authentication, deployment, CI/CD, registry, or external-exposure change outside the approved handoff to Codex.
-- Subagents are optional and limited to clearly parallel mechanical work within the same files, scope, and constraints.
+- Any delegated work follows the native Codex role policy in `AGENTS.md` and the one-active-writer boundary.
 - On Windows, keep a delegated command line ASCII-only when its instructions contain non-ASCII text; put those instructions in a UTF-8 handoff file.
 
 ## Safety and Scope
