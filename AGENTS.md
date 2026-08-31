@@ -29,16 +29,13 @@ The active handoff or equivalent inline prompt is the approved task scope. Verif
 
 ## Model and Role Policy
 
-- Use GPT-5.3-Codex-Spark (`gpt-5.3-codex-spark`) proactively, when available, for low-risk, well-scoped, independently verifiable supporting work that requires no material design judgment or source-code implementation.
-- GPT-5.6 Terra (`gpt-5.6-terra`) or Sol (`gpt-5.6-sol`) owns requirements and design. Whenever Terra is used, set its reasoning level to `high`. Prefer Sol for substantial ambiguity, risk, or cross-boundary reasoning.
-- Run every Claude Code task with `--permission-mode auto`.
-- After design is fixed, delegate source-code implementation first to Claude Code Sonnet at effort medium from the repository root: `claude -p --model sonnet --effort medium --permission-mode auto "<handoff/task prompt>"`.
-- Only when Sonnet is unavailable because of usage limits or service availability, use GPT-5.6 Luna (`gpt-5.6-luna`) with reasoning level `max` for the same implementation slice.
-- Implementation failure, failed verification, or a design question is not model unavailability; return it to Codex instead of switching models.
-- Apply this policy to every coordinating Codex model and its subagents. Do not create coordinator-specific exceptions unless the user explicitly changes the policy.
-- Claude Code subagents are optional and limited to clearly parallel mechanical work inside the current task scope. They inherit its constraints.
-- Codex may keep requirements, design, read-only investigation, review, synthesis, and small documentation-consistency changes in one context.
-
+- Before implementation, classify the initial route from acceptance evidence: `small-primary` for small or transfer-negative work, `bounded` for settled multi-step work with one verifiable writer, `adaptive` when unresolved native, platform, runtime, or cross-subsystem behavior is material, or `non-implementation` for analysis, design, review, or operations. This classification does not force delegation; reclassify only after a material scope change or contract reset.
+- Use GPT-5.6 Sol as the preferred main worker; the user's actual runtime model and reasoning choice remains authoritative. Sol owns intent, design, approval boundaries, integration, and user communication and can directly finish small or transfer-negative work. Use configured Luna roles (`bounded_explorer`/`bounded_implementer`) for bounded work and Terra roles (`adaptive_implementer`/`bounded_reviewer`) for adaptive implementation or risk-justified review; do not force delegation or pin the main reasoning level in project instructions.
+- Use native Codex roles: `bounded_implementer` is the cohesive default for settled work; choose `adaptive_implementer` directly when acceptance depends on unresolved native, platform, or cross-layer lifecycle behavior.
+- Use `bounded_explorer` only for genuinely independent read-only questions and `bounded_reviewer` only when concrete correctness, security, compatibility, or verification risk warrants it. One active writer owns overlapping files or behavior.
+- The writer's stable self-review gate is a dispatch barrier. If the writer changes the candidate after review starts, acceptance must be re-established; request a fresh final review only when material risk still warrants it. A second correction round, or two blocked/partial returns, requires a contract reset before continuing. If a selected role is unavailable or unobservable, use an observable equivalent or keep the work in the primary context.
+- Name the concrete material risk in any reviewer handoff. Use a fresh task boundary for an independent phase with its own acceptance and verification; reintegrate delegated work from the stable diff and evidence instead of repeating its discovery.
+- Claude Code is not an approved route unless an explicit policy change says so.
 ## Durable Project Rules
 
 - Keep the service and frontend lightweight. Prefer the Go standard library and plain JavaScript; do not add dependencies or a framework without explicit approval.
@@ -53,12 +50,31 @@ The active handoff or equivalent inline prompt is the approved task scope. Verif
 
 ## Safety and Scope
 
+Personal-use iteration is the default unless the user or verified project
+requirements establish stronger obligations. Use the smallest normal-path
+implementation, a brief useful check, routine reversible
+deployment/application and any necessary restart through the known existing
+user-controlled target and procedure, normal-use smoke, and targeted correction
+of observed errors. Do not require
+speculative edge-case coverage, hardening, abstractions, new tests, an offline
+harness, or a full suite for ordinary changes. Required device, security,
+data, and approval gates still precede runtime; a required pre-application
+review receives a stable source/diff candidate before application. The initial
+implementation or fix request supplies standing permission for this bounded
+routine cycle, so no fresh confirmation is needed. This does not infer Git
+commit/push/merge, publication/release/registry or hosted-config changes,
+credentials/permissions/exposure, destructive data or migrations, new targets
+or cost, or project-specific protected operations. If a target or check is
+unavailable, report readiness separately; record only required deferred checks
+in the existing issue or ledger with verification, approval, and resume
+conditions.
+
 - Preserve unrelated user and other-agent changes. Treat unexpected diffs as having unknown authorship and keep them outside the current task unless confirmed.
 - Do not inspect secrets, credentials, personal or device data, real `devices.json`, shutdown credentials, Basic Auth credentials, `.env`, production configuration, or runtime state unless their contents are strictly necessary for the approved task.
 - Do not edit secrets, credentials, `.env`, local settings, device configuration, production data, runtime state, remote systems, or generated heavy artifacts unless the approved task explicitly requires the change.
 - Never reproduce secrets, credentials, personal or device data, private network values, or production configuration in prompts, handoffs, documentation examples, logs, reports, verification output, or external tools.
-- Do not add dependencies or change build tooling, packaging, CI/CD, deployment, networking, persistence, authentication, or external exposure outside the approved task scope.
-- Do not commit, push, publish, or deploy unless explicitly requested.
+- Do not add dependencies or change build tooling, packaging, CI/CD, deployment procedure or configuration, networking, persistence, authentication, or external exposure outside the approved task scope.
+- Do not commit, push, or publish unless explicitly requested. Routine reversible deployment/application and necessary restart may use the bounded personal-use allowance above on the established target and known procedure; other deployment requires explicit authorization. Live-device network actions remain separately controlled.
 
 ## Handoff Workflow
 
